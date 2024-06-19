@@ -1,0 +1,15 @@
+# package directories
+node_modules
+jspm_packages
+.idea
+# Serverless directories
+.serverless
+.esbuild
+config/fbServiceAccountKey.json
+.env.prod
+dist/
+scripts/console/ignoreme
+
+tuts/
+firebase-creds.json
+utils/vulgarWords.txt

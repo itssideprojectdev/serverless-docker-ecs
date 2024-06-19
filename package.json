@@ -1,0 +1,23 @@
+{
+  "name": "serverless-docker-ecs",
+  "version": "1.0.0",
+  "description": "CLI tool for serverless Docker configurations on ECS",
+  "scripts": {
+    "build": "node scripts/esbuild.js"
+  },
+  "keywords": [],
+  "author": "Dested",
+  "license": "ISC",
+  "bin": {
+    "sde": "dist/cli.js"
+  },
+  "main": "dist/cli.js",
+  "dependencies": {
+    "commander": "^12.1.0"
+  },
+  "devDependencies": {
+    "esbuild": "^0.21.5",
+    "prettier": "^3.3.2",
+    "typescript": "^5.4.5"
+  }
+}
