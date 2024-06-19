@@ -2,10 +2,19 @@
 import {Command} from 'commander';
 import fs from 'node:fs';
 import esbuild from 'esbuild';
+import path from 'node:path';
 import shell from 'shelljs';
 import chokidar from 'chokidar';
 import dockerTemplate from './dockerTemplate.txt';
 import {ChildProcess} from 'node:child_process';
+import * as os from 'node:os';
+const getTempDirPath = () => {
+  const tmp = os.tmpdir();
+  return path.join(tmp, Math.random().toString(36));
+};
+const tempPath = getTempDirPath();
+fs.mkdirSync(tempPath, {recursive: true});
+const dockerfilePath = path.join(tempPath, 'Dockerfile');
 
 const program = new Command();
 program.version('0.0.1');
@@ -91,7 +100,7 @@ function getConfig() {
 }
 
 function dockerBuild(config: Config) {
-  shell.exec(`docker build -t ${config.name} .`);
+  shell.exec(`docker build -t ${config.name} . -f ${dockerfilePath}`);
 }
 
 function dockerRunLocal(config: Config) {
@@ -136,7 +145,7 @@ program
     }
 
     fs.writeFileSync(
-      'Dockerfile',
+      dockerfilePath,
       dockerTemplate
         .replace('{nodeVersion}', config.nodeVersion ? config.nodeVersion.toString() : '22')
         .replace('{port}', config.port.toString())
