@@ -3,7 +3,9 @@ import {Command} from 'commander';
 import fs from 'node:fs';
 import esbuild from 'esbuild';
 import shell from 'shelljs';
+import chokidar from 'chokidar';
 import dockerTemplate from './dockerTemplate.txt';
+import {ChildProcess} from 'node:child_process';
 
 const program = new Command();
 program.version('0.0.1');
@@ -43,6 +45,7 @@ program
       entry: './src/index.ts',
       esbuildPlugins: [],
       port: 80,
+      nodeVersion: 22,
       esbuildExternals: [],
       envs: {
         prod: {
@@ -76,6 +79,7 @@ async function buildProject(config: Config) {
       sourcemap: true,
       plugins: config.esbuildPlugins,
     });
+    console.log('Build complete');
   } catch (e) {
     console.error(e);
     throw e;
@@ -84,6 +88,22 @@ async function buildProject(config: Config) {
 
 function getConfig() {
   return eval(fs.readFileSync('config.js', 'utf-8')) as Config;
+}
+
+function dockerBuild(config: Config) {
+  shell.exec(`docker build -t ${config.name} .`);
+}
+
+function dockerRunLocal(config: Config) {
+  shell.exec(`docker run -p ${config.port}:${config.port} ${config.name}`);
+}
+
+function restartService(config: Config) {
+  shell.exec(
+    `aws ecs update-service --profile ${config.envs.prod.aws.profile} --force-new-deployment --cluster ${
+      config.name
+    }-cluster --service ${config.name}`
+  );
 }
 
 program
@@ -115,63 +135,79 @@ program
       return;
     }
 
+    fs.writeFileSync(
+      'Dockerfile',
+      dockerTemplate
+        .replace('{nodeVersion}', config.nodeVersion ? config.nodeVersion.toString() : '22')
+        .replace('{port}', config.port.toString())
+    );
+
     if (options.local) {
-      // specify the dockerfile
-      fs.writeFileSync(
-        'Dockerfile',
-        dockerTemplate
-          .replace('{nodeVersion}', config.nodeVersion ? config.nodeVersion.toString() : '22')
-          .replace('{port}', config.port.toString())
-      );
-      shell.exec(`docker build -t ${config.name} . && docker run -p ${config.port}:${config.port} ${config.name}`);
+      console.log('Deploying the project locally...');
+      dockerBuild(config);
+      dockerRunLocal(config);
     } else {
       console.log('Deploying the project to aws...');
+      const password = shell
+        .exec(
+          `aws ecr get-login-password  --profile ${config.envs.prod.aws.profile} --region ${config.envs.prod.aws.region}`,
+          {silent: true}
+        )
+        .stdout.trim();
+
+      // get aws account id
+      const accountId = shell
+        .exec('aws sts get-caller-identity --query "Account" --output text', {silent: true})
+        .stdout.trim();
+      shell.exec(
+        `docker login --username AWS --password=${password} ${accountId}.dkr.ecr.${config.envs.prod.aws.region}.amazonaws.com`
+      );
+      dockerBuild(config);
+      shell.exec(
+        `docker tag ${config.name}:latest ${accountId}.dkr.ecr.${config.envs.prod.aws.region}.amazonaws.com/${config.name}`
+      );
+      shell.exec(`docker push ${accountId}.dkr.ecr.${config.envs.prod.aws.region}.amazonaws.com/${config.name}`);
+
+      restartService(config);
     }
   });
 
 program
   .command('run')
   .description('Run the project locally')
+  .option('-w, --watch', 'Watch the project for changes')
   .action(async () => {
     if (!fs.existsSync('config.js')) {
       console.error('Project does not exist');
       return;
     }
+    let childProcess: ChildProcess | undefined = undefined;
     const config = getConfig();
+    let building = false;
+    chokidar.watch('./src').on('all', async () => {
+      if (building) {
+        return;
+      }
+      if (childProcess) {
+        console.log('killing');
+        childProcess.kill('SIGTERM'); // not working
+      }
+      building = true;
+      await buildProject(config);
+      console.log('HERE');
+      childProcess = shell.exec(`node .sde/index.js`, {async: true});
 
-    await buildProject(config);
-
-    shell.exec(`node .sde/index.js`, {async: true});
+      building = false;
+    });
   });
 program.parse();
 
 /*
 
-// initialize a new project
-//  - creates the config js
+need to run the cdk stuff to set up the cluster
+need to set up the ecr repository
 
-config.js
-  - stores the project name
-  - stores the entry point
-  - links to any esbuild plugins
-  - stores any docker funkiness
-  - dev env
-  - prod env
-  - port to expose
-  - aws
-    - region
-    - profile
 
-commands
- - run local
-   - runs esbuild
-   - runs the dist with dev flags
-   - nodemon
- - deploy
-  - need to get aws accountid
-  - login aws
-   - aws ecr get-login-password  --profile quickgame --region us-west-2 | docker login --username AWS --password-stdin {accountid}.dkr.ecr.us-west-2.amazonaws.com
-  - docker build -t {name} . && docker tag ${name}:latest {accountId}.dkr.ecr.us-west-2.amazonaws.com
-  - docker push {accountid}.dkr.ecr.us-west-2.amazonaws.com/{name}
-  - aws ecs update-service --profile {profile} --force-new-deployment --cluster localtunnel-cluster --service localtunnel
- */
+
+
+*/
