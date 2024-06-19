@@ -7,8 +7,11 @@ function build() {
       bundle: true,
       platform: 'node',
       target: 'es2022',
-      external: ['node:fs', 'prettier', 'node:stream', 'ssh2', 'canvas'],
+      external: ['node:fs', 'prettier', 'esbuild', 'shelljs'],
       sourcemap: true,
+      logOverride: {
+        'direct-eval': 'info',
+      },
       plugins: require('./esbuild-plugins'),
     })
     .catch(() => process.exit(1));

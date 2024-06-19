@@ -3,7 +3,8 @@
   "version": "1.0.0",
   "description": "CLI tool for serverless Docker configurations on ECS",
   "scripts": {
-    "build": "node scripts/esbuild.js"
+    "build": "node scripts/esbuild.js",
+    "watch": "npm run build && chokidar \"src/**/*\" -c \"npm run build\""
   },
   "keywords": [],
   "author": "Dested",
@@ -13,10 +14,14 @@
   },
   "main": "dist/cli.js",
   "dependencies": {
-    "commander": "^12.1.0"
+    "commander": "^12.1.0",
+    "esbuild": "^0.21.5",
+    "shelljs": "^0.8.5"
   },
   "devDependencies": {
-    "esbuild": "^0.21.5",
+    "@types/node": "^20.14.5",
+    "chokidar-cli": "^3.0.0",
+    "@types/shelljs": "^0.8.15",
     "prettier": "^3.3.2",
     "typescript": "^5.4.5"
   }
