@@ -8,6 +8,9 @@ import chokidar from 'chokidar';
 import dockerTemplate from './dockerTemplate.txt';
 import {ChildProcess} from 'node:child_process';
 import * as os from 'node:os';
+import * as cdk from '@aws-cdk/core';
+import {DeployStack} from './cdk';
+
 const getTempDirPath = () => {
   const tmp = os.tmpdir();
   return path.join(tmp, Math.random().toString(36));
@@ -19,21 +22,30 @@ const dockerfilePath = path.join(tempPath, 'Dockerfile');
 const program = new Command();
 program.version('0.0.1');
 type Config = {
+  aws: {
+    cpu: number;
+    memory: number;
+    sslCertificateARN: string;
+    vpcID: string;
+    healthCheckRoute: string;
+    hostedZoneID: string;
+    zoneName: string;
+    domainName: string;
+    profile: string;
+    region: string;
+    accountId: string;
+  };
   entry: string;
-  esbuildPlugins: Array<any>;
-  esbuildExternals: Array<string>;
-  name: string;
   envs: {
     [key: string]: {
-      aws: {
-        profile: string;
-        region: string;
-      };
       env: {NODE_ENV: string};
     };
   };
-  port: number;
+  esbuildExternals: Array<string>;
+  esbuildPlugins: Array<any>;
+  name: string;
   nodeVersion: number;
+  port: number;
 };
 program
   .command('init')
@@ -56,12 +68,21 @@ program
       port: 80,
       nodeVersion: 22,
       esbuildExternals: [],
+      aws: {
+        region: 'us-west-2',
+        accountId: 'us-west-2',
+        profile: '',
+        cpu: 256,
+        memory: 512,
+        sslCertificateARN: '',
+        vpcID: '',
+        healthCheckRoute: '/',
+        hostedZoneID: '',
+        zoneName: '',
+        domainName: '',
+      },
       envs: {
         prod: {
-          aws: {
-            region: 'us-west-2',
-            profile: 'quickgame',
-          },
           env: {
             NODE_ENV: 'development',
           },
@@ -109,10 +130,71 @@ function dockerRunLocal(config: Config) {
 
 function restartService(config: Config) {
   shell.exec(
-    `aws ecs update-service --profile ${config.envs.prod.aws.profile} --force-new-deployment --cluster ${
+    `aws ecs update-service --profile ${config.aws.profile} --force-new-deployment --cluster ${
       config.name
     }-cluster --service ${config.name}`
   );
+}
+
+async function deployDocker(options: {local: boolean}) {
+  if (!fs.existsSync('config.js')) {
+    console.error('Project does not exist');
+    return;
+  }
+  const config = getConfig();
+  await buildProject(config);
+
+  if (!shell.which('docker')) {
+    shell.echo('Sorry, this script requires docker');
+    shell.exit(1);
+    return;
+  }
+  if (!shell.which('aws')) {
+    shell.echo('Sorry, this script requires aws');
+    shell.exit(1);
+    return;
+  }
+  // check if docker daemon is running
+  if (shell.exec('docker info', {silent: true}).code !== 0) {
+    shell.echo('Docker daemon is not running');
+    shell.exit(1);
+    return;
+  }
+
+  fs.writeFileSync(
+    dockerfilePath,
+    dockerTemplate
+      .replace('{nodeVersion}', config.nodeVersion ? config.nodeVersion.toString() : '22')
+      .replace('{port}', config.port.toString())
+  );
+
+  if (options.local) {
+    console.log('Deploying the project locally...');
+    dockerBuild(config);
+    dockerRunLocal(config);
+  } else {
+    console.log('Deploying the project to aws...');
+    const password = shell
+      .exec(`aws ecr get-login-password  --profile ${config.aws.profile} --region ${config.aws.region}`, {
+        silent: true,
+      })
+      .stdout.trim();
+
+    // get aws account id
+    const accountId = shell
+      .exec('aws sts get-caller-identity --query "Account" --output text', {silent: true})
+      .stdout.trim();
+    shell.exec(
+      `docker login --username AWS --password=${password} ${accountId}.dkr.ecr.${config.aws.region}.amazonaws.com`
+    );
+    dockerBuild(config);
+    shell.exec(
+      `docker tag ${config.name}:latest ${accountId}.dkr.ecr.${config.aws.region}.amazonaws.com/${config.name}`
+    );
+    shell.exec(`docker push ${accountId}.dkr.ecr.${config.aws.region}.amazonaws.com/${config.name}`);
+
+    restartService(config);
+  }
 }
 
 program
@@ -120,65 +202,102 @@ program
   .description('Deploy the project')
   .option('-l, --local', 'Run the docker instance local')
   .action(async (options) => {
+    await deployDocker(options);
+  });
+
+program
+  .command('setup-aws')
+  .description('Setup the aws resources')
+  .action(async (options) => {
     if (!fs.existsSync('config.js')) {
       console.error('Project does not exist');
       return;
     }
+
     const config = getConfig();
     await buildProject(config);
 
     if (!shell.which('docker')) {
-      shell.echo('Sorry, this script requires docker');
+      shell.echo('Sorry, this script requires docker, use https://docs.docker.com/get-docker/');
       shell.exit(1);
       return;
     }
     if (!shell.which('aws')) {
-      shell.echo('Sorry, this script requires aws');
+      shell.echo('Sorry, this script requires aws, use npm install -g aws-cli');
       shell.exit(1);
       return;
     }
-    // check if docker daemon is running
-    if (shell.exec('docker info', {silent: true}).code !== 0) {
-      shell.echo('Docker daemon is not running');
+    if (!shell.which('cdk')) {
+      shell.echo('Sorry, this script requires cdk, use npm install -g aws-cdk');
       shell.exit(1);
       return;
     }
 
-    fs.writeFileSync(
-      dockerfilePath,
-      dockerTemplate
-        .replace('{nodeVersion}', config.nodeVersion ? config.nodeVersion.toString() : '22')
-        .replace('{port}', config.port.toString())
-    );
+    // use aws profile for cdk
+    process.env.AWS_PROFILE = config.aws.profile;
+    process.env.AWS_REGION = config.aws.region;
+    // bootstrap
+    shell.exec(`cdk bootstrap --profile ${config.aws.profile} aws://${config.aws.accountId}/${config.aws.region}`);
 
-    if (options.local) {
-      console.log('Deploying the project locally...');
-      dockerBuild(config);
-      dockerRunLocal(config);
-    } else {
-      console.log('Deploying the project to aws...');
-      const password = shell
-        .exec(
-          `aws ecr get-login-password  --profile ${config.envs.prod.aws.profile} --region ${config.envs.prod.aws.region}`,
-          {silent: true}
-        )
-        .stdout.trim();
+    let app = new cdk.App({
+      outdir: process.cwd() + '/.cdk.out',
+    });
 
-      // get aws account id
-      const accountId = shell
-        .exec('aws sts get-caller-identity --query "Account" --output text', {silent: true})
-        .stdout.trim();
-      shell.exec(
-        `docker login --username AWS --password=${password} ${accountId}.dkr.ecr.${config.envs.prod.aws.region}.amazonaws.com`
-      );
-      dockerBuild(config);
-      shell.exec(
-        `docker tag ${config.name}:latest ${accountId}.dkr.ecr.${config.envs.prod.aws.region}.amazonaws.com/${config.name}`
-      );
-      shell.exec(`docker push ${accountId}.dkr.ecr.${config.envs.prod.aws.region}.amazonaws.com/${config.name}`);
+    new DeployStack(app, config.name, {
+      name: config.name,
+      domainName: config.aws.domainName,
+      zoneName: config.aws.zoneName,
+      hostedZoneID: config.aws.hostedZoneID,
+      healthCheckRoute: config.aws.healthCheckRoute,
+      vpcId: config.aws.vpcID,
+      sslCertificateARN: config.aws.sslCertificateARN,
+      memory: config.aws.memory,
+      cpu: config.aws.cpu,
+      step: 'setup',
+      props: {
+        env: {
+          account: config.aws.accountId,
+          region: config.aws.region,
+        },
+      },
+    });
 
-      restartService(config);
-    }
+    const assembly = app.synth({validateOnSynthesis: true});
+
+    // Get the directory where the cloud assembly is located
+    const cloudAssemblyDirectory = assembly.directory;
+    console.log('Cloud assembly directory:', cloudAssemblyDirectory);
+    // Run the CDK CLI deploy command
+    const deployCommand = `cdk deploy --profile ${config.aws.profile} --require-approval never --app ${cloudAssemblyDirectory}`;
+
+    console.log('Deploying the stack...');
+    shell.exec(deployCommand, {silent: false});
+
+    return;
+    await deployDocker({local: false});
+
+    app = new cdk.App({outdir: process.cwd() + '/.cdk.out'});
+    new DeployStack(app, config.name, {
+      name: config.name,
+      domainName: config.aws.domainName,
+      zoneName: config.aws.zoneName,
+      hostedZoneID: config.aws.hostedZoneID,
+      healthCheckRoute: config.aws.healthCheckRoute,
+      vpcId: config.aws.vpcID,
+      sslCertificateARN: config.aws.sslCertificateARN,
+      memory: config.aws.memory,
+      cpu: config.aws.cpu,
+      step: 'deploy',
+      props: {
+        env: {
+          account: config.aws.accountId,
+          region: config.aws.region,
+        },
+      },
+    });
+
+    app.synth();
+    shell.exec(deployCommand, {silent: false});
   });
 
 program
@@ -209,14 +328,12 @@ program
       building = false;
     });
   });
+
 program.parse();
 
 /*
 
 need to run the cdk stuff to set up the cluster
 need to set up the ecr repository
-
-
-
 
 */
