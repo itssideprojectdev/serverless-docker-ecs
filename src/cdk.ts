@@ -1,62 +1,39 @@
-import * as cdk from '@aws-cdk/core';
-import * as ec2 from '@aws-cdk/aws-ec2';
-import * as ecs from '@aws-cdk/aws-ecs';
-import * as ecr from '@aws-cdk/aws-ecr';
-import * as ecs_patterns from '@aws-cdk/aws-ecs-patterns';
-import * as route53 from '@aws-cdk/aws-route53';
-import * as acm from '@aws-cdk/aws-certificatemanager';
-import * as iam from '@aws-cdk/aws-iam';
-import {FargateTaskDefinition} from '@aws-cdk/aws-ecs';
-import {Construct, RemovalPolicy, StackProps} from '@aws-cdk/core';
+import {RemovalPolicy, Stack, StackProps} from 'aws-cdk-lib';
+import {Construct} from 'constructs';
+import {ManagedPolicy, PolicyStatement, Role, ServicePrincipal} from 'aws-cdk-lib/aws-iam';
+import {SecurityGroup, Vpc} from 'aws-cdk-lib/aws-ec2';
+import {Certificate} from 'aws-cdk-lib/aws-certificatemanager';
+import {AwsLogDriver, Cluster, ContainerImage, FargateTaskDefinition} from 'aws-cdk-lib/aws-ecs';
+import {CnameRecord, HostedZone} from 'aws-cdk-lib/aws-route53';
+import {Repository} from 'aws-cdk-lib/aws-ecr';
+import {
+  ApplicationLoadBalancedFargateService,
+  ApplicationLoadBalancedServiceRecordType,
+} from 'aws-cdk-lib/aws-ecs-patterns';
+import {Config} from './config';
 
-export class DeployStack extends cdk.Stack {
-  constructor(
-    scope: Construct,
-    id: string,
-    {
-      name,
-      vpcId,
-      hostedZoneID,
-      zoneName,
-      domainName,
-      healthCheckRoute,
-      cpu,
-      memory,
-      sslCertificateARN,
-      step,
-      props,
-    }: {
-      name: string;
-      vpcId: string;
-      hostedZoneID: string;
-      healthCheckRoute: string;
-      zoneName: string;
-      domainName: string;
-      cpu: number;
-      memory: number;
-      sslCertificateARN: string;
-      step: 'setup' | 'deploy';
-      props?: StackProps;
-    }
-  ) {
+export class DeployStack extends Stack {
+  constructor(scope: Construct, id: string, config: Config, step: 'setup' | 'deploy', props?: StackProps) {
     super(scope, id, props);
-    const vpc = ec2.Vpc.fromLookup(this, 'VPC', {
-      vpcId: vpcId,
+
+    const name = config.name;
+    const vpc = Vpc.fromLookup(this, 'VPC', {
+      vpcId: config.aws.vpcId,
     });
-    const taskExecutionRole = new iam.Role(this, 'TaskExecutionRole', {
-      assumedBy: new iam.ServicePrincipal('ecs-tasks.amazonaws.com'),
+    const taskExecutionRole = new Role(this, 'TaskExecutionRole', {
+      assumedBy: new ServicePrincipal('ecs-tasks.amazonaws.com'),
       managedPolicies: [
-        iam.ManagedPolicy.fromAwsManagedPolicyName('service-role/AmazonECSTaskExecutionRolePolicy'),
+        ManagedPolicy.fromAwsManagedPolicyName('service-role/AmazonECSTaskExecutionRolePolicy'),
         // Add any other managed policies or inline policies as needed
       ],
     });
-    const taskRole = new iam.Role(this, 'TaskRole', {
-      assumedBy: new iam.ServicePrincipal('ecs-tasks.amazonaws.com'),
+    const taskRole = new Role(this, 'TaskRole', {
+      assumedBy: new ServicePrincipal('ecs-tasks.amazonaws.com'),
     });
 
     // Adding ECS DescribeServices permission to the task role
     taskRole.addToPolicy(
-      new iam.PolicyStatement({
+      new PolicyStatement({
         actions: [
           'ecs:DescribeServices',
           'ecs:DescribeTaskDefinition',
@@ -70,50 +47,51 @@ export class DeployStack extends cdk.Stack {
     );
 
     // create the ecs cluster
-    const cluster = new ecs.Cluster(this, `${name}Cluster`, {
+    const cluster = new Cluster(this, `${name}Cluster`, {
       vpc,
       clusterName: `${name}-cluster`,
     });
 
     // create acm cert
-    const DNSZone = route53.HostedZone.fromHostedZoneAttributes(this, 'HostedZone', {
-      zoneName: zoneName,
-      hostedZoneId: hostedZoneID,
+    const DNSZone = HostedZone.fromHostedZoneAttributes(this, 'HostedZone', {
+      zoneName: config.aws.zoneName,
+      hostedZoneId: config.aws.hostedZoneID,
     });
     // add wildcard CNAME
-    new route53.CnameRecord(this, 'CnameRecordWildcard', {
+    new CnameRecord(this, 'CnameRecordWildcard', {
       zone: DNSZone,
       recordName: '*',
-      domainName: domainName,
+      domainName: config.aws.domainName,
     });
-    const cert = acm.Certificate.fromCertificateArn(this, 'Cert', sslCertificateARN);
+    const cert = Certificate.fromCertificateArn(this, 'Cert', config.aws.sslCertificateARN);
 
     // task definition
-    let FgTask = new FargateTaskDefinition(this, 'LocaltunnelDefinition', {
-      cpu: cpu,
-      memoryLimitMiB: memory,
+    let FgTask = new FargateTaskDefinition(this, `${name}Definition`, {
+      cpu: config.aws.cpu,
+      memoryLimitMiB: config.aws.memory,
       executionRole: taskExecutionRole,
       taskRole: taskRole,
     });
 
-    const repository = new ecr.Repository(this, `${name}-server`, {
+    const repository = new Repository(this, `${name}-server`, {
       repositoryName: `${name}-server`,
       removalPolicy: RemovalPolicy.DESTROY,
+      emptyOnDelete: true,
     });
 
-    FgTask.addContainer('localtunnel', {
-      image: ecs.ContainerImage.fromEcrRepository(repository),
+    FgTask.addContainer(name, {
+      image: ContainerImage.fromEcrRepository(repository),
       cpu: 128,
-      entryPoint: ['node', 'init.mjs'],
-      logging: new ecs.AwsLogDriver({
-        streamPrefix: id + '-' + 'tunnel',
+      entryPoint: ['node', 'index.js'],
+      logging: new AwsLogDriver({
+        streamPrefix: id + '-' + name,
         logRetention: 1,
       }),
     }).addPortMappings({
-      containerPort: 80,
+      containerPort: config.port,
     });
 
-    const mySecurityGroup = new ec2.SecurityGroup(this, `${name}-sg`, {
+    const mySecurityGroup = new SecurityGroup(this, `${name}-sg`, {
       vpc,
       description: 'Allow TCP 1024-65536',
       allowAllOutbound: true,
@@ -125,27 +103,26 @@ export class DeployStack extends cdk.Stack {
       return;
     }
 
-    let localtunnelsvc = new ecs_patterns.ApplicationLoadBalancedFargateService(this, `${name}Service`, {
+    let scv = new ApplicationLoadBalancedFargateService(this, `${name}Service`, {
       cluster: cluster,
       cpu: 512,
-      vpc,
-      desiredCount: 1,
+      desiredCount: config.aws.concurrentExecutions,
       taskDefinition: FgTask,
       memoryLimitMiB: 2048,
       publicLoadBalancer: true,
       certificate: cert,
       redirectHTTP: true,
-      recordType: ecs_patterns.ApplicationLoadBalancedServiceRecordType.ALIAS,
+      recordType: ApplicationLoadBalancedServiceRecordType.ALIAS,
       listenerPort: 443,
-      domainName: domainName,
+      domainName: config.aws.domainName,
       domainZone: DNSZone,
       assignPublicIp: true,
       serviceName: name,
       securityGroups: [mySecurityGroup],
     });
     // set health route
-    localtunnelsvc.targetGroup.configureHealthCheck({
-      path: healthCheckRoute,
+    scv.targetGroup.configureHealthCheck({
+      path: config.aws.healthCheckRoute,
     });
   }
 }

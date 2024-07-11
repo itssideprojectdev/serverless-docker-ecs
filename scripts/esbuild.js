@@ -7,7 +7,7 @@ function build() {
       bundle: true,
       platform: 'node',
       target: 'es2022',
-      external: ['node:fs', 'prettier', 'esbuild', 'shelljs'],
+      external: ['node:fs', 'prettier', 'esbuild', 'shelljs', '@aws-cdk/cli-lib-alpha', 'aws-cdk-lib'],
       sourcemap: true,
       logOverride: {
         'direct-eval': 'info',

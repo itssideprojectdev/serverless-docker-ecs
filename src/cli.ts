@@ -8,8 +8,10 @@ import chokidar from 'chokidar';
 import dockerTemplate from './dockerTemplate.txt';
 import {ChildProcess} from 'node:child_process';
 import * as os from 'node:os';
-import * as cdk from '@aws-cdk/core';
 import {DeployStack} from './cdk';
+import {AwsCdkCli, ICloudAssemblyDirectoryProducer, RequireApproval} from '@aws-cdk/cli-lib-alpha';
+import {App} from 'aws-cdk-lib';
+import {Config} from './config';
 
 const getTempDirPath = () => {
   const tmp = os.tmpdir();
@@ -21,32 +23,6 @@ const dockerfilePath = path.join(tempPath, 'Dockerfile');
 
 const program = new Command();
 program.version('0.0.1');
-type Config = {
-  aws: {
-    cpu: number;
-    memory: number;
-    sslCertificateARN: string;
-    vpcID: string;
-    healthCheckRoute: string;
-    hostedZoneID: string;
-    zoneName: string;
-    domainName: string;
-    profile: string;
-    region: string;
-    accountId: string;
-  };
-  entry: string;
-  envs: {
-    [key: string]: {
-      env: {NODE_ENV: string};
-    };
-  };
-  esbuildExternals: Array<string>;
-  esbuildPlugins: Array<any>;
-  name: string;
-  nodeVersion: number;
-  port: number;
-};
 program
   .command('init')
   .description('Initialize a new project')
@@ -72,10 +48,11 @@ program
         region: 'us-west-2',
         accountId: 'us-west-2',
         profile: '',
+        concurrentExecutions: 3,
         cpu: 256,
         memory: 512,
         sslCertificateARN: '',
-        vpcID: '',
+        vpcId: '',
         healthCheckRoute: '/',
         hostedZoneID: '',
         zoneName: '',
@@ -100,6 +77,7 @@ async function buildProject(config: Config) {
       fs.rmSync('.sde', {recursive: true});
     }
     const result = await esbuild.build({
+      absWorkingDir: process.cwd(),
       entryPoints: [config.entry],
       outfile: './.sde/index.js',
       bundle: true,
@@ -180,18 +158,15 @@ async function deployDocker(options: {local: boolean}) {
       })
       .stdout.trim();
 
-    // get aws account id
-    const accountId = shell
-      .exec('aws sts get-caller-identity --query "Account" --output text', {silent: true})
-      .stdout.trim();
+    const accountId = config.aws.accountId;
     shell.exec(
       `docker login --username AWS --password=${password} ${accountId}.dkr.ecr.${config.aws.region}.amazonaws.com`
     );
     dockerBuild(config);
     shell.exec(
-      `docker tag ${config.name}:latest ${accountId}.dkr.ecr.${config.aws.region}.amazonaws.com/${config.name}`
+      `docker tag ${config.name}:latest ${accountId}.dkr.ecr.${config.aws.region}.amazonaws.com/${config.name}-server`
     );
-    shell.exec(`docker push ${accountId}.dkr.ecr.${config.aws.region}.amazonaws.com/${config.name}`);
+    shell.exec(`docker push ${accountId}.dkr.ecr.${config.aws.region}.amazonaws.com/${config.name}-server`);
 
     restartService(config);
   }
@@ -208,96 +183,17 @@ program
 program
   .command('setup-aws')
   .description('Setup the aws resources')
+  .option('-f, --firstTime', 'if this is the first time deploying')
   .action(async (options) => {
-    if (!fs.existsSync('config.js')) {
-      console.error('Project does not exist');
-      return;
-    }
+    await setupAws(options.firstTime);
+  });
+program
+  .command('destroy-aws')
+  .description('Setup the aws resources')
+  .action(async (options) => {
+    // are you sure
 
-    const config = getConfig();
-    await buildProject(config);
-
-    if (!shell.which('docker')) {
-      shell.echo('Sorry, this script requires docker, use https://docs.docker.com/get-docker/');
-      shell.exit(1);
-      return;
-    }
-    if (!shell.which('aws')) {
-      shell.echo('Sorry, this script requires aws, use npm install -g aws-cli');
-      shell.exit(1);
-      return;
-    }
-    if (!shell.which('cdk')) {
-      shell.echo('Sorry, this script requires cdk, use npm install -g aws-cdk');
-      shell.exit(1);
-      return;
-    }
-
-    // use aws profile for cdk
-    process.env.AWS_PROFILE = config.aws.profile;
-    process.env.AWS_REGION = config.aws.region;
-    // bootstrap
-    shell.exec(`cdk bootstrap --profile ${config.aws.profile} aws://${config.aws.accountId}/${config.aws.region}`);
-
-    let app = new cdk.App({
-      outdir: process.cwd() + '/.cdk.out',
-    });
-
-    new DeployStack(app, config.name, {
-      name: config.name,
-      domainName: config.aws.domainName,
-      zoneName: config.aws.zoneName,
-      hostedZoneID: config.aws.hostedZoneID,
-      healthCheckRoute: config.aws.healthCheckRoute,
-      vpcId: config.aws.vpcID,
-      sslCertificateARN: config.aws.sslCertificateARN,
-      memory: config.aws.memory,
-      cpu: config.aws.cpu,
-      step: 'setup',
-      props: {
-        env: {
-          account: config.aws.accountId,
-          region: config.aws.region,
-        },
-      },
-    });
-
-    const assembly = app.synth({validateOnSynthesis: true});
-
-    // Get the directory where the cloud assembly is located
-    const cloudAssemblyDirectory = assembly.directory;
-    console.log('Cloud assembly directory:', cloudAssemblyDirectory);
-    // Run the CDK CLI deploy command
-    const deployCommand = `cdk deploy --profile ${config.aws.profile} --require-approval never --app ${cloudAssemblyDirectory}`;
-
-    console.log('Deploying the stack...');
-    shell.exec(deployCommand, {silent: false});
-
-    return;
-    await deployDocker({local: false});
-
-    app = new cdk.App({outdir: process.cwd() + '/.cdk.out'});
-    new DeployStack(app, config.name, {
-      name: config.name,
-      domainName: config.aws.domainName,
-      zoneName: config.aws.zoneName,
-      hostedZoneID: config.aws.hostedZoneID,
-      healthCheckRoute: config.aws.healthCheckRoute,
-      vpcId: config.aws.vpcID,
-      sslCertificateARN: config.aws.sslCertificateARN,
-      memory: config.aws.memory,
-      cpu: config.aws.cpu,
-      step: 'deploy',
-      props: {
-        env: {
-          account: config.aws.accountId,
-          region: config.aws.region,
-        },
-      },
-    });
-
-    app.synth();
-    shell.exec(deployCommand, {silent: false});
+    await destroyAWS();
   });
 
 program
@@ -329,7 +225,117 @@ program
     });
   });
 
+async function setupAws(firstTime: boolean) {
+  if (!fs.existsSync('config.js')) {
+    console.error('Project does not exist');
+    return;
+  }
+
+  const config = getConfig();
+  await buildProject(config);
+
+  if (!shell.which('docker')) {
+    shell.echo('Sorry, this script requires docker, use https://docs.docker.com/get-docker/');
+    shell.exit(1);
+    return;
+  }
+  if (!shell.which('aws')) {
+    shell.echo('Sorry, this script requires aws, use npm install -g aws-cli');
+    shell.exit(1);
+    return;
+  }
+  if (!shell.which('cdk')) {
+    shell.echo('Sorry, this script requires cdk, use npm install -g aws-cdk');
+    shell.exit(1);
+    return;
+  }
+
+  // use aws profile for cdk
+  process.env.AWS_PROFILE = config.aws.profile;
+  process.env.AWS_REGION = config.aws.region;
+
+  const producer = new MyProducer();
+  producer.config = config;
+
+  let cli = AwsCdkCli.fromCloudAssemblyDirectoryProducer(producer);
+
+  if (!firstTime) {
+    await cli.synth();
+    await cli.bootstrap({
+      profile: config.aws.profile,
+      stacks: [`aws://${config.aws.accountId}/${config.aws.region}`],
+    });
+    producer.step = 'deploy';
+    await cli.deploy({requireApproval: RequireApproval.NEVER, profile: config.aws.profile});
+    await deployDocker({local: false});
+  } else {
+    await cli.synth();
+    //
+
+    await cli.bootstrap({
+      profile: config.aws.profile,
+      stacks: [`aws://${config.aws.accountId}/${config.aws.region}`],
+    });
+
+    await cli.synth();
+
+    await cli.deploy({requireApproval: RequireApproval.NEVER, profile: config.aws.profile});
+
+    await deployDocker({local: false});
+  }
+}
+
+async function destroyAWS() {
+  if (!fs.existsSync('config.js')) {
+    console.error('Project does not exist');
+    return;
+  }
+
+  const config = getConfig();
+  await buildProject(config);
+
+  if (!shell.which('docker')) {
+    shell.echo('Sorry, this script requires docker, use https://docs.docker.com/get-docker/');
+    shell.exit(1);
+    return;
+  }
+  if (!shell.which('aws')) {
+    shell.echo('Sorry, this script requires aws, use npm install -g aws-cli');
+    shell.exit(1);
+    return;
+  }
+  if (!shell.which('cdk')) {
+    shell.echo('Sorry, this script requires cdk, use npm install -g aws-cdk');
+    shell.exit(1);
+    return;
+  }
+
+  // use aws profile for cdk
+  process.env.AWS_PROFILE = config.aws.profile;
+  process.env.AWS_REGION = config.aws.region;
+
+  const producer = new MyProducer();
+  producer.config = config;
+
+  let cli = AwsCdkCli.fromCloudAssemblyDirectoryProducer(producer);
+
+  await cli.destroy({
+    profile: config.aws.profile,
+  });
+}
+
 program.parse();
+/*
+
+process.chdir('C:\\code\\sde-test1');
+setupAws()
+  .then(() => {
+    console.log('done');
+  })
+  .catch((e) => {
+    console.error(e);
+  });
+*/
 
 /*
 
@@ -337,3 +343,23 @@ need to run the cdk stuff to set up the cluster
 need to set up the ecr repository
 
 */
+
+class MyProducer implements ICloudAssemblyDirectoryProducer {
+  step: 'setup' | 'deploy' = 'setup';
+  config?: Config;
+  async produce(context: Record<string, any>) {
+    if (!this.config) {
+      throw new Error('Config not set');
+    }
+    let app = new App({context, outdir: process.cwd() + '/.cdk.out'});
+    const config = this.config;
+    new DeployStack(app, config.name, config, this.step, {
+      env: {
+        account: config.aws.accountId,
+        region: config.aws.region,
+      },
+    });
+
+    return app.synth({}).directory;
+  }
+}
