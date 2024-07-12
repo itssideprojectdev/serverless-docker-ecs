@@ -95,7 +95,8 @@ async function buildProject(config: Config) {
 }
 
 function getConfig() {
-  return eval(fs.readFileSync('config.js', 'utf-8')) as Config;
+  return require(require.resolve('./config', {paths: [process.cwd()]}));
+  // return eval(fs.readFileSync('config.js', 'utf-8')) as Config;
 }
 
 function dockerBuild(config: Config) {
@@ -218,7 +219,6 @@ program
       }
       building = true;
       await buildProject(config);
-      console.log('HERE');
       childProcess = shell.exec(`node .sde/index.js`, {async: true});
 
       building = false;
@@ -267,7 +267,6 @@ async function setupAws(firstTime: boolean) {
     });
     producer.step = 'deploy';
     await cli.deploy({requireApproval: RequireApproval.NEVER, profile: config.aws.profile});
-    await deployDocker({local: false});
   } else {
     await cli.synth();
     //
