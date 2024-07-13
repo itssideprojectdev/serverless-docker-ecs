@@ -87,6 +87,8 @@ async function buildProject(config: Config) {
       sourcemap: true,
       plugins: config.esbuildPlugins,
     });
+    // fs.copyFileSync('./package.json', './.sde/package.json');
+    fs.copyFileSync('./.env', './.sde/.env');
     console.log('Build complete');
   } catch (e) {
     console.error(e);
@@ -104,15 +106,21 @@ function dockerBuild(config: Config) {
 }
 
 function dockerRunLocal(config: Config) {
-  shell.exec(`docker run -p ${config.port}:${config.port} ${config.name}`);
+  console.log(`docker run -p ${config.port}:${config.port} ${config.name}`);
+  const r = shell.exec(`docker run -p ${config.port}:${config.port} ${config.name}`);
+  // log errors
+  console.log(r.code);
+  if (r.code !== 0) {
+    console.error(r.stderr);
+  }
 }
 
 function restartService(config: Config) {
-  shell.exec(
-    `aws ecs update-service --profile ${config.aws.profile} --force-new-deployment --cluster ${
-      config.name
-    }-cluster --service ${config.name}`
-  );
+  let s = `aws ecs update-service --profile ${config.aws.profile} --force-new-deployment --cluster ${
+    config.name
+  }-cluster --service ${config.name}`;
+
+  shell.exec(s);
 }
 
 async function deployDocker(options: {local: boolean}) {
@@ -220,7 +228,7 @@ program
       building = true;
       await buildProject(config);
       childProcess = shell.exec(`node .sde/index.js`, {async: true});
-
+      // childProcess.kill('SIGTERM');
       building = false;
     });
   });
