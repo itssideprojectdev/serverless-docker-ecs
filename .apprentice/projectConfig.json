@@ -1,0 +1,68 @@
+{
+  "rootPath": "C:\\code\\serverless-docker-ecs",
+  "files": [
+    "scripts/esbuild-plugins.js",
+    "scripts/esbuild.js",
+    "src/cdk.ts",
+    "src/cli.ts",
+    "src/config.ts",
+    "src/dockerTemplate.txt",
+    "src/hotReload.ts",
+    "src/restartTasks.js"
+  ],
+  "projectSummary": "This is a tool for deploying ecs instances using a cli. ",
+  "fileOutlines": [
+    {
+      "filePath": "scripts/esbuild-plugins.js",
+      "hash": -1667863536,
+      "updatedDate": "2024-04-23T22:22:05.336Z"
+    },
+    {
+      "filePath": "scripts/esbuild.js",
+      "hash": -787022667,
+      "updatedDate": "2024-07-11T18:04:57.484Z"
+    },
+    {
+      "filePath": "src/cdk.ts",
+      "hash": -1856032143,
+      "updatedDate": "2024-09-09T15:49:22.135Z"
+    },
+    {
+      "filePath": "src/cli.ts",
+      "hash": -1794843053,
+      "updatedDate": "2024-09-09T15:49:22.199Z"
+    },
+    {
+      "filePath": "src/config.ts",
+      "hash": 70838150,
+      "updatedDate": "2024-09-09T15:49:22.132Z"
+    },
+    {
+      "filePath": "src/dockerTemplate.txt",
+      "hash": 1845945439,
+      "updatedDate": "2024-09-09T15:49:31.927Z"
+    },
+    {
+      "filePath": "src/hotReload.ts",
+      "hash": -995455508,
+      "updatedDate": "2024-09-09T15:51:04.911Z"
+    },
+    {
+      "filePath": "src/restartTasks.js",
+      "hash": -913305732,
+      "updatedDate": "2024-07-12T04:07:11.898Z"
+    }
+  ],
+  "anthropicKey": "",
+  "excludeFiles": [],
+  "glob": [
+    "**/*.ts*",
+    "**/*.css",
+    "**/*.txt",
+    "**/*.js",
+    "!**/*.d.ts",
+    "!**/node_modules/**",
+    "!**/dist/**"
+  ],
+  "openAIKey": ""
+}

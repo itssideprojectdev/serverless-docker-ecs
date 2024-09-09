@@ -260,6 +260,44 @@ async function deployToS3(config: Config) {
   console.log('Static assets deployed to S3');
 }
 
+async function deployBuildToS3(config: Config) {
+  console.log('Deploying code to S3...');
+  process.env.AWS_PROFILE = config.aws.profile;
+
+  const s3Client = new S3Client({
+    region: config.aws.region,
+    credentials: fromIni({profile: config.aws.profile}),
+  });
+
+  const files = glob.sync('.sde/**/*', {nodir: true});
+
+  for (const file of files) {
+    const fileContent = fs.readFileSync(file);
+    const key = file.replace('.sde/', '');
+
+    await s3Client.send(
+      new PutObjectCommand({
+        Bucket: config.name + '-hot-reload',
+        Key: key,
+        Body: fileContent,
+        ContentType: getContentType(file),
+      })
+    );
+  }
+
+  const canaryContent = Date.now().toString();
+  await s3Client.send(
+    new PutObjectCommand({
+      Bucket: config.name + '-hot-reload',
+      Key: 'canary.txt',
+      Body: canaryContent,
+      ContentType: 'text/plain',
+    })
+  );
+
+  console.log('Code deployed to S3');
+}
+
 function getContentType(filename: string): string {
   const ext = path.extname(filename).toLowerCase();
   switch (ext) {

@@ -26,4 +26,5 @@ EXPOSE {port}
 #CMD ["ls", "-la", ".next"]
 # CMD ["cat", "package.json"]
 
+# CMD ["node", "hotReload.js"]
 CMD ["pnpm", "start"]

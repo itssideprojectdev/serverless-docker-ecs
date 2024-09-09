@@ -25,9 +25,7 @@ export type Config = {
         type: 'nextjs';
       };
   envs: {
-    [key: string]: {
-      env: {NODE_ENV: string};
-    };
+    [key: string]: {env: {NODE_ENV: string}};
   };
   name: string;
   nodeVersion: number;

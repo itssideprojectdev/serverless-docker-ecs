@@ -46,6 +46,8 @@ export class DeployStack extends Stack {
           'ecs:ListTasks',
           'ecs:ListServices',
           'ec2:DescribeNetworkInterfaces',
+          's3:GetObject',
+          's3:ListBucket',
         ],
         resources: ['*'],
       })
@@ -104,6 +106,13 @@ export class DeployStack extends Stack {
 
     const staticAssetsBucket = new Bucket(this, `${name}StaticAssets`, {
       bucketName: config.name + '-static-assets',
+      publicReadAccess: false,
+      removalPolicy: RemovalPolicy.DESTROY,
+      autoDeleteObjects: true,
+    });
+
+    const hotReloadBucket = new Bucket(this, `${name}HotReload`, {
+      bucketName: config.name + '-hot-reload',
       publicReadAccess: false,
       removalPolicy: RemovalPolicy.DESTROY,
       autoDeleteObjects: true,
