@@ -1,5 +1,6 @@
 #!/usr/bin/env node
 import {S3Client, PutObjectCommand} from '@aws-sdk/client-s3';
+import {fromIni} from '@aws-sdk/credential-providers';
 import * as glob from 'glob';
 import {Command} from 'commander';
 import fs from 'node:fs';
@@ -233,8 +234,11 @@ program
 
 async function deployToS3(config: Config) {
   console.log('Deploying static assets to S3...');
+  process.env.AWS_PROFILE = config.aws.profile;
+
   const s3Client = new S3Client({
     region: config.aws.region,
+    credentials: fromIni({profile: config.aws.profile}),
   });
 
   const files = glob.sync('.sde/static/**/*', {nodir: true});
