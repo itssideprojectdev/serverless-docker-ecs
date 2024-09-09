@@ -9,6 +9,7 @@ import path from 'node:path';
 import shell from 'shelljs';
 import chokidar from 'chokidar';
 import dockerTemplate from './dockerTemplate.txt';
+import hotReload from './hotReload.txt';
 import {ChildProcess} from 'node:child_process';
 import * as os from 'node:os';
 import {DeployStack} from './cdk';
@@ -172,6 +173,8 @@ async function deployDocker(options: {local: boolean}) {
     dockerBuild(config);
     dockerRunLocal(config);
   } else {
+    await Promise.all([deployToS3(config), deployBuildToS3(config)]);
+
     console.log('Deploying the project to aws...');
     const password = shell
       .exec(`aws ecr get-login-password  --profile ${config.aws.profile} --region ${config.aws.region}`, {
@@ -229,7 +232,8 @@ program
     }
     const config = getConfig();
     await buildProject(config);
-    await deployToS3(config);
+
+    await Promise.all([deployToS3(config), deployBuildToS3(config)]);
   });
 
 async function deployToS3(config: Config) {
@@ -243,19 +247,21 @@ async function deployToS3(config: Config) {
 
   const files = glob.sync('.sde/static/**/*', {nodir: true});
 
-  for (const file of files) {
-    const fileContent = fs.readFileSync(file);
-    const key = file.replace('.sde/', '');
+  await Promise.all(
+    files.map((file) => {
+      const fileContent = fs.readFileSync(file);
+      const key = file.replace('.sde/', '');
 
-    await s3Client.send(
-      new PutObjectCommand({
-        Bucket: config.name + '-static-assets',
-        Key: key,
-        Body: fileContent,
-        ContentType: getContentType(file),
-      })
-    );
-  }
+      return s3Client.send(
+        new PutObjectCommand({
+          Bucket: config.name + '-static-assets',
+          Key: key,
+          Body: fileContent,
+          ContentType: getContentType(file),
+        })
+      );
+    })
+  );
 
   console.log('Static assets deployed to S3');
 }
@@ -263,7 +269,7 @@ async function deployToS3(config: Config) {
 async function deployBuildToS3(config: Config) {
   console.log('Deploying code to S3...');
   process.env.AWS_PROFILE = config.aws.profile;
-
+  fs.writeFileSync('.sde/hotReload.js', hotReload);
   const s3Client = new S3Client({
     region: config.aws.region,
     credentials: fromIni({profile: config.aws.profile}),
@@ -271,19 +277,21 @@ async function deployBuildToS3(config: Config) {
 
   const files = glob.sync('.sde/**/*', {nodir: true});
 
-  for (const file of files) {
-    const fileContent = fs.readFileSync(file);
-    const key = file.replace('.sde/', '');
+  await Promise.all(
+    files.map((file) => {
+      const fileContent = fs.readFileSync(file);
+      const key = file.replace('.sde/', '');
 
-    await s3Client.send(
-      new PutObjectCommand({
-        Bucket: config.name + '-hot-reload',
-        Key: key,
-        Body: fileContent,
-        ContentType: getContentType(file),
-      })
-    );
-  }
+      return s3Client.send(
+        new PutObjectCommand({
+          Bucket: config.name + '-hot-reload',
+          Key: key,
+          Body: fileContent,
+          ContentType: getContentType(file),
+        })
+      );
+    })
+  );
 
   const canaryContent = Date.now().toString();
   await s3Client.send(
@@ -393,6 +401,8 @@ async function setupAws(firstTime: boolean) {
     });
     producer.step = 'deploy';
     await cli.deploy({requireApproval: RequireApproval.NEVER, profile: config.aws.profile});
+
+    await Promise.all([deployToS3(config), deployBuildToS3(config)]);
   } else {
     await cli.synth();
     //

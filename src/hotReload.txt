@@ -1,17 +1,17 @@
-import fs from 'fs';
-import path from 'path';
-import {S3Client, GetObjectCommand, ListObjectsV2Command} from '@aws-sdk/client-s3';
-import {spawn} from 'child_process';
+const fs = require('fs');
+const path = require('path');
+const {S3Client, GetObjectCommand, ListObjectsV2Command} = require('@aws-sdk/client-s3');
+const {spawn} = require('child_process');
 
 const s3Client = new S3Client({
   region: 'us-west-2',
 });
 
-let currentProcess: any = null;
+let currentProcess = null;
 const canaryFileName = 'canary.txt';
 let currentCanaryContent = '';
 
-async function checkCanaryFile(bucketName: string): Promise<boolean> {
+async function checkCanaryFile(bucketName) {
   try {
     const getParams = {
       Bucket: bucketName,
@@ -33,9 +33,34 @@ async function checkCanaryFile(bucketName: string): Promise<boolean> {
   }
 }
 
+function killProcess(process) {
+  return new Promise((resolve) => {
+    if (!process) {
+      resolve();
+      return;
+    }
+
+    process.on('exit', () => {
+      resolve();
+    });
+
+    process.kill();
+
+    // Fallback: force kill after 5 seconds if the process hasn't exited
+    setTimeout(() => {
+      if (process.killed === false) {
+        console.log('Force killing the process');
+        process.kill('SIGKILL');
+      }
+      resolve();
+    }, 5000);
+  });
+}
+
 async function checkForUpdates() {
   try {
-    let bucketName = 'memoizer' + '-hot-reload';
+    console.log('Checking for updates');
+    let bucketName = 'memoizer-ai' + '-hot-reload';
 
     const canaryChanged = await checkCanaryFile(bucketName);
 
@@ -43,6 +68,7 @@ async function checkForUpdates() {
       const listParams = {
         Bucket: bucketName,
       };
+      console.log('Getting files from S3');
 
       const listResult = await s3Client.send(new ListObjectsV2Command(listParams));
 
@@ -56,7 +82,7 @@ async function checkForUpdates() {
           const {Body} = await s3Client.send(new GetObjectCommand(getParams));
           if (Body) {
             const content = await Body.transformToString();
-            const localPath = path.join(process.cwd(), file.Key!);
+            const localPath = path.join(process.cwd(), file.Key);
             fs.mkdirSync(path.dirname(localPath), {recursive: true});
             fs.writeFileSync(localPath, content);
           }
@@ -67,14 +93,16 @@ async function checkForUpdates() {
 
       if (currentProcess) {
         console.log('Stopping current process');
-        currentProcess.kill();
+        await killProcess(currentProcess);
+        currentProcess = null;
       }
 
       console.log('Starting new process');
       currentProcess = spawn('pnpm', ['start'], {stdio: 'inherit'});
 
-      currentProcess.on('exit', (code: number) => {
+      currentProcess.on('exit', (code) => {
         console.log(`Child process exited with code ${code}`);
+        currentProcess = null;
       });
     } else {
       console.log('No updates found');
@@ -87,5 +115,5 @@ async function checkForUpdates() {
 // Initial check
 checkForUpdates();
 
-// Check every 60 seconds
-setInterval(checkForUpdates, 60000);
+// Check every 30 seconds
+setInterval(checkForUpdates, 30000);

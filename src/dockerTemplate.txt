@@ -17,6 +17,8 @@ COPY ./patches /app/patches
 
 RUN pnpm install --prod
 
+RUN pnpm add @aws-sdk/client-s3
+
 ADD .sde /app/.next
 
 ENV NODE_ENV production
@@ -26,5 +28,5 @@ EXPOSE {port}
 #CMD ["ls", "-la", ".next"]
 # CMD ["cat", "package.json"]
 
-# CMD ["node", "hotReload.js"]
-CMD ["pnpm", "start"]
+CMD ["node", ".next/hotReload.js"]
+# CMD ["pnpm", "start"]
