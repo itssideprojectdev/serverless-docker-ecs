@@ -1,7 +1,7 @@
 const fs = require('fs');
 const path = require('path');
 const {S3Client, GetObjectCommand, ListObjectsV2Command} = require('@aws-sdk/client-s3');
-const {spawn} = require('child_process');
+const {spawn, exec} = require('child_process');
 
 const s3Client = new S3Client({
   region: 'us-west-2',
@@ -10,6 +10,7 @@ const s3Client = new S3Client({
 let currentProcess = null;
 const canaryFileName = 'canary.txt';
 let currentCanaryContent = '';
+const PORT = 3000;
 
 async function checkCanaryFile(bucketName) {
   try {
@@ -33,27 +34,39 @@ async function checkCanaryFile(bucketName) {
   }
 }
 
-function killProcess(process) {
-  return new Promise((resolve) => {
-    if (!process) {
-      resolve();
-      return;
-    }
+function killProcessOnPort(port) {
+  return new Promise((resolve, reject) => {
+    const command = process.platform === 'win32'
+      ? `netstat -ano | findstr :${port}`
+      : `lsof -i :${port} -t`;
 
-    process.on('exit', () => {
-      resolve();
-    });
-
-    process.kill();
-
-    // Fallback: force kill after 5 seconds if the process hasn't exited
-    setTimeout(() => {
-      if (process.killed === false) {
-        console.log('Force killing the process');
-        process.kill('SIGKILL');
+    exec(command, (error, stdout, stderr) => {
+      if (error) {
+        console.log(`No process found on port ${port}`);
+        resolve();
+        return;
       }
-      resolve();
-    }, 5000);
+
+      const pid = stdout.trim();
+      if (pid) {
+        const killCommand = process.platform === 'win32'
+          ? `taskkill /PID ${pid} /F`
+          : `kill -9 ${pid}`;
+
+        exec(killCommand, (error) => {
+          if (error) {
+            console.error(`Failed to kill process on port ${port}:`, error);
+            reject(error);
+          } else {
+            console.log(`Killed process ${pid} on port ${port}`);
+            resolve();
+          }
+        });
+      } else {
+        console.log(`No process found on port ${port}`);
+        resolve();
+      }
+    });
   });
 }
 
@@ -93,9 +106,12 @@ async function checkForUpdates() {
 
       if (currentProcess) {
         console.log('Stopping current process');
-        await killProcess(currentProcess);
+        currentProcess.kill('SIGKILL');
         currentProcess = null;
       }
+
+      console.log(`Ensuring port ${PORT} is free`);
+      await killProcessOnPort(PORT);
 
       console.log('Starting new process');
       currentProcess = spawn('pnpm', ['start'], {stdio: 'inherit'});
@@ -115,5 +131,5 @@ async function checkForUpdates() {
 // Initial check
 checkForUpdates();
 
-// Check every 30 seconds
-setInterval(checkForUpdates, 30000);
+// Check every 60 seconds
+setInterval(checkForUpdates, 60000);
