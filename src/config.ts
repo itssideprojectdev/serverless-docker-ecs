@@ -3,6 +3,7 @@ export type Config = {
     cpu: number;
     memory: number;
     sslCertificateARN: string;
+    sslEastCertificateARN: string;
     vpcId: string;
     healthCheckRoute: string;
     hostedZoneID: string;
@@ -13,14 +14,21 @@ export type Config = {
     region: string;
     accountId: string;
   };
-  entry: string;
+  build:
+    | {
+        type: 'esbuild';
+        entry: string;
+        esbuildExternals: Array<string>;
+        esbuildPlugins: Array<any>;
+      }
+    | {
+        type: 'nextjs';
+      };
   envs: {
     [key: string]: {
       env: {NODE_ENV: string};
     };
   };
-  esbuildExternals: Array<string>;
-  esbuildPlugins: Array<any>;
   name: string;
   nodeVersion: number;
   port: number;

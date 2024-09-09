@@ -1,4 +1,6 @@
 #!/usr/bin/env node
+import {S3Client, PutObjectCommand} from '@aws-sdk/client-s3';
+import * as glob from 'glob';
 import {Command} from 'commander';
 import fs from 'node:fs';
 import esbuild from 'esbuild';
@@ -39,12 +41,16 @@ program
     // console.log('Description:', options.description);
     const defaultConfig: Config = {
       name: str,
-      entry: './src/index.ts',
-      esbuildPlugins: [],
+      build: {
+        type: 'esbuild',
+        entry: './src/index.ts',
+        esbuildPlugins: [],
+        esbuildExternals: [],
+      },
       port: 80,
       nodeVersion: 22,
-      esbuildExternals: [],
       aws: {
+        sslEastCertificateARN: '',
         region: 'us-west-2',
         accountId: 'us-west-2',
         profile: '',
@@ -76,17 +82,22 @@ async function buildProject(config: Config) {
     if (fs.existsSync('.sde')) {
       fs.rmSync('.sde', {recursive: true});
     }
-    const result = await esbuild.build({
-      absWorkingDir: process.cwd(),
-      entryPoints: [config.entry],
-      outfile: './.sde/index.js',
-      bundle: true,
-      platform: 'node',
-      target: 'es2022',
-      external: config.esbuildExternals,
-      sourcemap: true,
-      plugins: config.esbuildPlugins,
-    });
+    fs.mkdirSync('./.sde');
+    if (config.build.type === 'esbuild') {
+      const result = await esbuild.build({
+        absWorkingDir: process.cwd(),
+        entryPoints: [config.build.entry],
+        outfile: './.sde/index.js',
+        bundle: true,
+        platform: 'node',
+        target: 'es2022',
+        external: config.build.esbuildExternals,
+        sourcemap: true,
+        plugins: config.build.esbuildPlugins,
+      });
+    } else if (config.build.type === 'nextjs') {
+      shell.exec(`pnpm build`);
+    }
     // fs.copyFileSync('./package.json', './.sde/package.json');
     fs.copyFileSync('./.env', './.sde/.env');
     console.log('Build complete');
@@ -176,7 +187,9 @@ async function deployDocker(options: {local: boolean}) {
       `docker tag ${config.name}:latest ${accountId}.dkr.ecr.${config.aws.region}.amazonaws.com/${config.name}-server`
     );
     shell.exec(`docker push ${accountId}.dkr.ecr.${config.aws.region}.amazonaws.com/${config.name}-server`);
-
+    console.log('Service deployed');
+    await new Promise((resolve) => setTimeout(resolve, 10000));
+    console.log('Restarting the service...');
     restartService(config);
   }
 }
@@ -204,6 +217,69 @@ program
 
     await destroyAWS();
   });
+
+program
+  .command('deploy-code')
+  .description('Build and deploy static assets to S3')
+  .action(async () => {
+    if (!fs.existsSync('config.js')) {
+      console.error('Project does not exist');
+      return;
+    }
+    const config = getConfig();
+    await buildProject(config);
+    await deployToS3(config);
+  });
+
+async function deployToS3(config: Config) {
+  console.log('Deploying static assets to S3...');
+  const s3Client = new S3Client({
+    region: config.aws.region,
+  });
+
+  const files = glob.sync('.sde/static/**/*', {nodir: true});
+
+  for (const file of files) {
+    const fileContent = fs.readFileSync(file);
+    const key = file.replace('.sde/', '');
+
+    await s3Client.send(
+      new PutObjectCommand({
+        Bucket: config.name + '-static-assets',
+        Key: key,
+        Body: fileContent,
+        ContentType: getContentType(file),
+      })
+    );
+  }
+
+  console.log('Static assets deployed to S3');
+}
+
+function getContentType(filename: string): string {
+  const ext = path.extname(filename).toLowerCase();
+  switch (ext) {
+    case '.html':
+      return 'text/html';
+    case '.css':
+      return 'text/css';
+    case '.js':
+      return 'application/javascript';
+    case '.json':
+      return 'application/json';
+    case '.png':
+      return 'image/png';
+    case '.jpg':
+    case '.jpeg':
+      return 'image/jpeg';
+    case '.gif':
+      return 'image/gif';
+    case '.svg':
+      return 'image/svg+xml';
+    default:
+      return 'application/octet-stream';
+  }
+}
 
 program
   .command('run')
@@ -299,7 +375,6 @@ async function destroyAWS() {
   }
 
   const config = getConfig();
-  await buildProject(config);
 
   if (!shell.which('docker')) {
     shell.echo('Sorry, this script requires docker, use https://docs.docker.com/get-docker/');

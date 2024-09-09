@@ -16,6 +16,9 @@
   "main": "dist/cli.js",
   "dependencies": {
     "chokidar-cli": "^3.0.0",
+    "glob": "^11.0.0",
+    "@aws-sdk/client-s3": "^3.645.0",
+
     "chokidar": "^3.6.0",
     "commander": "^12.1.0",
     "esbuild": "0.21.4",

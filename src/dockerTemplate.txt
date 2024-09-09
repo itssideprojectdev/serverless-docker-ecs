@@ -1,5 +1,10 @@
 FROM node:lts-bookworm-slim
 
+RUN apt-get update && \
+    apt-get install -y python3 make g++ && \
+    apt-get clean && \
+    rm -rf /var/lib/apt/lists/*
+
 RUN npm install -g pnpm
 
 ENV PNPM_HOME=/app/.pnpm
@@ -8,15 +13,17 @@ ENV PATH=$PNPM_HOME:$PATH
 WORKDIR /app
 
 COPY package.json /app/
-COPY pnpm-lock.yaml /app/
+COPY ./patches /app/patches
 
 RUN pnpm install --prod
 
-COPY ./.sde /app/
+ADD .sde /app/.next
 
 ENV NODE_ENV production
 
 EXPOSE {port}
 
+#CMD ["ls", "-la", ".next"]
+# CMD ["cat", "package.json"]
 
-CMD ["node", "./index.js"]
+CMD ["pnpm", "start"]
