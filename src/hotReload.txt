@@ -13,6 +13,7 @@ let currentCanaryContent = '';
 const PORT = 3000;
 
 async function checkCanaryFile(bucketName) {
+  //return true;
   try {
     const getParams = {
       Bucket: bucketName,
@@ -36,12 +37,11 @@ async function checkCanaryFile(bucketName) {
 
 function killProcessOnPort(port) {
   return new Promise((resolve, reject) => {
-    const command = process.platform === 'win32'
-      ? `netstat -ano | findstr :${port}`
-      : `lsof -i :${port} -t`;
+    const command = process.platform === 'win32' ? `netstat -ano | findstr :${port}` : `lsof -i :${port} -t`;
 
     exec(command, (error, stdout, stderr) => {
       if (error) {
+        console.log(error);
         console.log(`No process found on port ${port}`);
         resolve();
         return;
@@ -49,9 +49,7 @@ function killProcessOnPort(port) {
 
       const pid = stdout.trim();
       if (pid) {
-        const killCommand = process.platform === 'win32'
-          ? `taskkill /PID ${pid} /F`
-          : `kill -9 ${pid}`;
+        const killCommand = process.platform === 'win32' ? `taskkill /PID ${pid} /F` : `kill -9 ${pid}`;
 
         exec(killCommand, (error) => {
           if (error) {
@@ -78,29 +76,29 @@ async function checkForUpdates() {
     const canaryChanged = await checkCanaryFile(bucketName);
 
     if (canaryChanged) {
-      const listParams = {
-        Bucket: bucketName,
-      };
-      console.log('Getting files from S3');
+      /*  const listParams = {
+              Bucket: bucketName,
+            };
+            console.log('Getting files from S3');
 
-      const listResult = await s3Client.send(new ListObjectsV2Command(listParams));
+            const listResult = await s3Client.send(new ListObjectsV2Command(listParams));
 
-      if (listResult.Contents) {
-        for (const file of listResult.Contents) {
-          const getParams = {
-            Bucket: bucketName,
-            Key: file.Key,
-          };
+            if (listResult.Contents) {
+              for (const file of listResult.Contents) {
+                const getParams = {
+                  Bucket: bucketName,
+                  Key: file.Key,
+                };
 
-          const {Body} = await s3Client.send(new GetObjectCommand(getParams));
-          if (Body) {
-            const content = await Body.transformToString();
-            const localPath = path.join(process.cwd(), file.Key);
-            fs.mkdirSync(path.dirname(localPath), {recursive: true});
-            fs.writeFileSync(localPath, content);
-          }
-        }
-      }
+                const {Body} = await s3Client.send(new GetObjectCommand(getParams));
+                if (Body) {
+                  const content = await Body.transformToString();
+                  const localPath = path.join(process.cwd(), file.Key);
+                  fs.mkdirSync(path.dirname(localPath), {recursive: true});
+                  fs.writeFileSync(localPath, content);
+                }
+              }
+            }*/
 
       console.log('Files updated from S3');
 
@@ -110,7 +108,7 @@ async function checkForUpdates() {
         currentProcess = null;
       }
 
-      console.log(`Ensuring port ${PORT} is free`);
+      console.log(`Killing port ${PORT} is free`);
       await killProcessOnPort(PORT);
 
       console.log('Starting new process');
@@ -128,8 +126,59 @@ async function checkForUpdates() {
   }
 }
 
+function isPortFree(port) {
+  return new Promise((resolve) => {
+    const server = net
+      .createServer()
+      .once('error', () => {
+        resolve(false);
+      })
+      .once('listening', () => {
+        server.close();
+        resolve(true);
+      })
+      .listen(port);
+  });
+}
+
+async function waitForPortToBeFree(port, maxAttempts = 10, interval = 1000) {
+  for (let attempt = 0; attempt < maxAttempts; attempt++) {
+    if (await isPortFree(port)) {
+      return true;
+    }
+    await new Promise((resolve) => setTimeout(resolve, interval));
+  }
+  return false;
+}
+
 // Initial check
 checkForUpdates();
 
 // Check every 60 seconds
-setInterval(checkForUpdates, 60000);
+setInterval(checkForUpdates, 10000);
+
+console.log('hi');
+process.on('uncaughtException', function (err) {
+  console.log(err);
+});
+process.on('unhandledRejection', function (err) {
+  console.log(err);
+});
+function killProcess() {
+  if (process.exitTimeoutId) {
+    return;
+  }
+  process.exitTimeoutId = setTimeout(() => process.exit(0), 5000);
+  console.log('process will exit in 5 secon' + 'ds');
+  server?.stop();
+
+  console.log('async op. done');
+}
+
+process.on('SIGTERM', killProcess);
+process.on('SIGINT', killProcess);
+
+process.on('uncaughtException', (e) => {
+  console.log('[uncaughtException] app will be terminated: ', e.stack);
+  killProcess();
+});

@@ -115,7 +115,12 @@ function getConfig() {
 }
 
 function dockerBuild(config: Config) {
-  shell.exec(`docker build -t ${config.name} . -f ${dockerfilePath}`);
+  const result = shell.exec(`docker build -t ${config.name} . -f ${dockerfilePath}`);
+  console.log(result.code);
+  if (result.code !== 0) {
+    console.error(result.stderr);
+    throw new Error('Docker build failed');
+  }
 }
 
 function dockerRunLocal(config: Config) {
@@ -170,6 +175,7 @@ async function deployDocker(options: {local: boolean}) {
 
   if (options.local) {
     console.log('Deploying the project locally...');
+    fs.writeFileSync('.sde/hotReload.js', hotReload);
     dockerBuild(config);
     dockerRunLocal(config);
   } else {
@@ -342,21 +348,7 @@ program
     }
     let childProcess: ChildProcess | undefined = undefined;
     const config = getConfig();
-    let building = false;
-    chokidar.watch('./src').on('all', async () => {
-      if (building) {
-        return;
-      }
-      if (childProcess) {
-        console.log('killing');
-        childProcess.kill('SIGTERM'); // not working
-      }
-      building = true;
-      await buildProject(config);
-      childProcess = shell.exec(`node .sde/index.js`, {async: true});
-      // childProcess.kill('SIGTERM');
-      building = false;
-    });
+    childProcess = shell.exec(`pnpm dev`, {async: true});
   });
 
 async function setupAws(firstTime: boolean) {
